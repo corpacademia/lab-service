@@ -10,8 +10,8 @@ pipeline {
         IMAGE_LATEST   = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest"
 
         CLUSTER_NAME   = 'DevCluster-golabing'
-        SERVICE_NAME   = 'user-service-service-npk7b8tz '
-        TASK_FAMILY    = 'user-service'
+        SERVICE_NAME   = 'lab-service-service-d3fz1kfd'
+        TASK_FAMILY    = 'lab-service'
     }
 
     stages {
