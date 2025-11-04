@@ -1,36 +1,43 @@
 // app.js
 'use strict';
 
+require('dotenv').config(); // load env early
+
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const cookieParser = require('cookie-parser');
-const labRouter = require('../src/routes/labRoutes');
 const path = require('path');
 const fs = require('fs');
 const mime = require('mime-types');
 
 const app = express();
 
-// If you have a webhook that requires raw body (e.g. Stripe), mount it BEFORE bodyParser.json
-// Replace path/controller reference with your actual controller
+// Import controllers / routers
+const labRouter = require('./routes/labRoutes'); // adjusted relative path for typical structure
 const { insertPaymentAndAssignLab } = require('./controllers/labCartController');
 
-// initialize DB tables or run side-effects if required
-// require will execute; keep if your file has side-effects you need
-require('./db/labTables');
+// Initialize DB tables if module has side-effects
+// keep if labTables runs migrations/creates tables on require
+try {
+  require('./db/labTables');
+} catch (e) {
+  // log but don't crash app startup here — database init might be optional
+  console.warn('labTables init skipped or failed at require():', e && e.message ? e.message : e);
+}
 
-// --------------------------------------------------
+// ---------------------------
 // Middlewares
-// --------------------------------------------------
-// raw webhook route (keeps raw body for signature verification)
+// ---------------------------
+
+// Webhook that needs raw body (must be mounted before bodyParser.json)
 app.use('/webhook', express.raw({ type: 'application/json' }), insertPaymentAndAssignLab);
 
-// JSON / URL-encoded body parsers
+// Body parsers
 app.use(bodyParser.json({ limit: '100mb' }));
 app.use(bodyParser.urlencoded({ limit: '100mb', extended: true }));
 
-// CORS - use FRONTEND_URL env in production
+// CORS — in production set FRONTEND_URL env to your Cloudfront / domain
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:5173',
   credentials: true
@@ -38,10 +45,10 @@ app.use(cors({
 
 app.use(cookieParser());
 
-// Serve generated files from controllers folder (if you generate files there)
+// Serve generated files (if any)
 app.use('/generated', express.static(path.join(__dirname, 'controllers')));
 
-// Custom uploads route — serves files from ./public/uploads
+// Serve uploaded files safely from public/uploads
 app.use('/uploads/:filename', (req, res) => {
   const filename = req.params.filename;
   const filePath = path.join(__dirname, 'public', 'uploads', filename);
@@ -52,43 +59,34 @@ app.use('/uploads/:filename', (req, res) => {
 
   const mimeType = mime.lookup(filePath) || 'application/octet-stream';
   res.setHeader('Content-Type', mimeType);
-  // serve inline so browser can render images/pdf; change to attachment to force download
   res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
   fs.createReadStream(filePath).pipe(res);
 });
 
-// --------------------------------------------------
-// Health endpoint for ALB / ECS target group
-// --------------------------------------------------
-app.get('/health', (req, res) => {
-  // Keep this extremely lightweight (avoid DB/Redis checks that may slow or fail startup).
-  // If you want to check dependencies, implement a /ready or /readyz endpoint that performs async checks.
-  res.status(200).send('OK');
-});
+// ---------------------------
+// Health endpoint for ALB
+// ---------------------------
+// Keep extremely lightweight so ALB health check won't fail due to DB/Redis issues.
+app.get('/health', (_req, res) => res.status(200).send('OK'));
 
-// --------------------------------------------------
+// If you want a readiness probe that verifies DB/Redis, implement /ready or /readyz
+// and perform async checks there (used by deployments that want dependency checks).
+
+// ---------------------------
 // Application routes
-// --------------------------------------------------
+// ---------------------------
 app.use('/', labRouter);
 
-// --------------------------------------------------
+// ---------------------------
 // Generic error handler
-// --------------------------------------------------
-app.use((err, req, res, next) => {
-  // Nice and explicit logging for ECS logs
+// ---------------------------
+app.use((err, _req, res, _next) => {
+  // Log error stack for debugging (ECS logs)
   console.error('Unhandled server error:', err && err.stack ? err.stack : err);
   const status = err && err.status ? err.status : 500;
   const msg = err && err.message ? err.message : 'Internal Server Error';
-  // Do not leak stack in production; consider showing less info based on NODE_ENV
+  // In production, avoid sending stack traces to client
   res.status(status).json({ error: msg });
 });
-
-module.exports = app;
-
-
-app.use('/',labRouter);
-
-
-
 
 module.exports = app;
